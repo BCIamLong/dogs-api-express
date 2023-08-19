@@ -1,0 +1,18 @@
+[
+  {
+    "name": "adaffa",
+    "breed": "Labrador Retriever",
+    "breedType": "Purebred",
+    "popularity": "1",
+    "intelligence": 7,
+    "photo": "https://learnwebcode.github.io/json-example/images/cat-2.jpg"
+  },
+  {
+    "name": "qwwqrr",
+    "breed": "German Shepard",
+    "breedType": "Purebred",
+    "popularity": "2",
+    "intelligence": 3,
+    "photo": "https://learnwebcode.github.io/json-example/images/cat-2.jpg"
+  }
+]
