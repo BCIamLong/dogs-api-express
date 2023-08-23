@@ -1,13 +1,24 @@
 const { promisify } = require("util");
+const crypto = require("crypto");
+const validator = require("validator");
 const jwt = require("jsonwebtoken");
 const User = require("../models/userModel");
 const asyncCatch = require("../utils/asyncCatch");
 const AppError = require("../utils/AppError");
+const { sendEmail } = require("../utils/email");
 
-const signToken = (user) =>
+const signToken = user =>
   jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRES_IN,
   });
+
+const sendJWT = (res, statusCode, user) => {
+  const token = signToken(user);
+  res.status(statusCode).json({
+    status: "success",
+    token,
+  });
+};
 const signup = asyncCatch(async (req, res, next) => {
   const { name, email, password, passwordConfirm, passwordChangedAt } =
     req.body;
@@ -18,11 +29,8 @@ const signup = asyncCatch(async (req, res, next) => {
     passwordConfirm,
     passwordChangedAt,
   });
-  const token = signToken(newUser);
-  res.status(200).json({
-    status: "success",
-    token,
-  });
+
+  sendJWT(res, 200, newUser);
 });
 
 const login = asyncCatch(async (req, res, next) => {
@@ -30,20 +38,16 @@ const login = asyncCatch(async (req, res, next) => {
   if (!email || !password)
     return next(new AppError("Please fill required fill to login", 400));
 
-  const user = await User.findOne({ email });
+  const user = await User.findOne({ email }).select("+password");
   const check = await user?.checkPassword(password, user.password);
   if (!user || !check)
     return next(
       new AppError(
         "Email or password not correct, please check and try again",
-        400
-      )
+        400,
+      ),
     );
-  const token = signToken(user);
-  res.status(200).json({
-    status: "success",
-    token,
-  });
+  sendJWT(res, 200, user);
 });
 
 const protect = asyncCatch(async (req, res, next) => {
@@ -63,19 +67,150 @@ const protect = asyncCatch(async (req, res, next) => {
     return next(
       new AppError(
         "This user has been deleted, please contact with us to know detail or signup ",
-        401
-      )
+        401,
+      ),
     );
 
   if (currentUser.checkPasswordChangeAfter(decoded.iat))
     return next(
       new AppError(
         "This user recently changed password, please login again to get access ",
-        401
-      )
+        401,
+      ),
     );
 
   req.user = currentUser;
   next();
 });
-module.exports = { signup, login, protect };
+
+/**
+ *Restrict user perform the actions related to create, delete, update data which is the action for admin, manager,..., this is also authorization
+ *
+ * Of course if user try to perform this action we will accounced or forbbiden
+ * @param  {array} roles - The roles array constain valid roles can perform an action like delete user, dogs,...
+ * @return {function} middleware function - the middleware function (req, res next) is standard of express middleware can run in middleware stack
+ */
+const restrictTo =
+  (...roles) =>
+  (req, res, next) => {
+    if (!roles.includes(req.user.role))
+      return next(
+        new AppError("You don't have permission to perform this feature ", 403),
+      );
+
+    next();
+  };
+
+/**
+ * Allow user who forgot password can send request to reset password
+ *
+ * User need to provide email, then app will check this email if true we send reset password to user email
+ *
+ * Of course if user email is false, we will accnouced user
+ * @param {funtion} asyncCatch - the async wrapper function (like try catch block)
+ * @return {function} middleware function - the middleware function(req, res, next)
+ */
+const forgotPassword = asyncCatch(async (req, res, next) => {
+  const { email } = req.body;
+  if (!email) return next(new AppError("Please fill your email", 400));
+  if (!validator.isEmail(email))
+    return next(new AppError("Please fill the valid email", 400));
+  const user = await User.findOne({ email });
+  if (!user) return next(new AppError("Your email is not correct", 401));
+
+  const resetToken = user.createResetTokenPwd();
+
+  await user.save({ validateBeforeSave: false });
+
+  const message = `You forgot password, please click this link ${req.protocol}://${req.hostname}:3000/api/v1/users/reset-password/${resetToken}. If you didn't forgot your password, just ignore this mail`;
+  const subject = "Reset your password (valid in 12 minutes)";
+  try {
+    await sendEmail({ email, subject, message });
+
+    res.status(200).json({
+      status: "success",
+      message: "Sent mail to your email",
+    });
+  } catch (err) {
+    user.passwordResetToken = undefined;
+    user.passwordResetTokenTimeout = undefined;
+    await user.save();
+  }
+});
+
+/**
+ * Check and allow user can reset password when user perform forgot password feature
+ *
+ * First user perform forgot password feature then get a mail in user email
+ *
+ * Two user click the link in reset password mail in user email
+ *
+ * Three user fill password and confirm reset password
+ *
+ * If user password and confirm not in the same we also need to accouced
+ *
+ * If reset token password expired user must to back and perform forgot password feature again
+ * @param {function} asyncCatch - the async wrapper function(constain try catch block)
+ * @return {function} middleware funtion - the middeware function(req, res, next)
+ */
+const resetPassword = asyncCatch(async (req, res, next) => {
+  const passwordResetToken = crypto
+    .createHash("sha256")
+    .update(req.params.token)
+    .digest("hex");
+  const user = await User.findOne({
+    passwordResetToken,
+    passwordResetTokenTimeout: { $gt: Date.now() },
+  });
+  if (!user) return next(new AppError("Your token is invalid or expired", 401));
+
+  user.password = req.body.password;
+  user.passwordConfirm = req.body.passwordConfirm;
+  user.passwordResetToken = undefined;
+  user.passwordResetTokenTimeout = undefined;
+  await user.save();
+
+  sendJWT(res, 201, user);
+});
+
+/**
+ * Allow user logged in can update the current user password
+ *
+ * First: user login in to app
+ *
+ * Second: user re-enter password to confirm perform this feature
+ *
+ * Third: user enter new password and confirm (check type and password confirm is correct)
+ *
+ * Fourth: update user password
+ * @param {function} function - the wrapper function
+ * @return {function} function - the middeware function(req, nex, next)
+ */
+const updatePassword = asyncCatch(async (req, res, next) => {
+  //check current passwor: empty, valid
+  const { currentPassword } = req.body;
+  if (!currentPassword)
+    return next(
+      new AppError("Please fill your current password to confirm", 400),
+    );
+  if (currentPassword.length < 8)
+    return next(new AppError("Password must have at least 8 characters", 400));
+
+  const user = await User.findById(req.user.id).select("+password");
+  const check = await user.checkPassword(currentPassword, user.password);
+  if (!check) next(new AppError("Your current password is not correct", 401));
+  user.password = req.body.password;
+  user.passwordConfirm = req.body.passwordConfirm;
+  await user.save();
+  sendJWT(res, 201, user);
+});
+
+module.exports = {
+  signup,
+  login,
+  protect,
+  forgotPassword,
+  resetPassword,
+  updatePassword,
+  restrictTo,
+};

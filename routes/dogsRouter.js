@@ -8,14 +8,21 @@ const {
   getTop3SmartDogs,
   getDogsStats,
 } = require("../controllers/dogsController");
-const { protect } = require("../controllers/authController");
+const { protect, restrictTo } = require("../controllers/authController");
 
 const router = express.Router();
 
 router.get("/dogs-stats", getDogsStats);
 router.get("/top-3-smart-dogs", getTop3SmartDogs);
 
-router.route("/").get(protect, getAllDogs).post(createDog);
-router.route("/:id").get(getDog).patch(updateDog).delete(deleteDog);
+router
+  .route("/")
+  .get(protect, getAllDogs)
+  .post(protect, restrictTo("admin", "seller"), createDog);
+router
+  .route("/:id")
+  .get(getDog)
+  .patch(protect, restrictTo("admin", "seller"), updateDog)
+  .delete(protect, restrictTo("admin", "seller"), deleteDog);
 
 module.exports = router;
