@@ -1,6 +1,8 @@
+const crypto = require("crypto");
 const mongoose = require("mongoose");
 const validator = require("validator");
 const bcrypt = require("bcrypt");
+const AppError = require("../utils/AppError");
 
 const userSchema = new mongoose.Schema({
   name: {
@@ -13,10 +15,16 @@ const userSchema = new mongoose.Schema({
     validate: [validator.isEmail, "Please fill correct email"],
     unique: true,
   },
+  role: {
+    type: String,
+    enum: ["user", "admin", "seller"],
+    default: "user",
+  },
   password: {
     type: String,
     required: [true, "User must have a password"],
     minLength: [8, "Password must have at least 8 characters"],
+    select: false,
   },
   passwordConfirm: {
     type: String,
@@ -40,9 +48,27 @@ const userSchema = new mongoose.Schema({
     type: Date,
     select: false,
   },
+  passwordResetToken: String,
+  passwordResetTokenTimeout: Date,
+  active: {
+    type: Boolean,
+    default: true,
+  },
+  reasonDeleteAccout: String,
 });
 
 //static method
+
+userSchema.methods.createResetTokenPwd = function () {
+  const resetToken = crypto.randomBytes(48).toString("hex");
+  this.passwordResetToken = crypto
+    .createHash("sha256")
+    .update(resetToken)
+    .digest("hex");
+  this.passwordResetTokenTimeout = Date.now() + 12 * 60 * 1000;
+  return resetToken;
+};
+
 userSchema.methods.checkPassword = async function (currentPwd, hashPwd) {
   return await bcrypt.compare(currentPwd, hashPwd);
 };
@@ -58,6 +84,16 @@ userSchema.pre("save", async function (next) {
   this.password = await bcrypt.hash(this.password, 12);
   this.passwordConfirm = undefined;
 
+  if (this.isNew) return next();
+  if (this.passwordResetTokenTimeout < Date.now())
+    return next(new AppError("Your token is expired", 401));
+  this.passwordChangedAt = Date.now() - 1000;
+
+  next();
+});
+
+userSchema.pre(/^find/, function (next) {
+  this.find({ active: { $ne: false } });
   next();
 });
 
