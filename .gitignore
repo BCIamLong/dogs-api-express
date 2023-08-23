@@ -1,9 +1,9 @@
 node_modules/
 
-# Optional npm cache directory
-.npm
+*.env
 
-# Optional eslint cache
-.eslintcache
+.eslintrc.json
 
-.env
+dev-data/
+
+package-lock.json
