@@ -11,9 +11,14 @@ const {
   resetPassword,
   updatePassword,
   protect,
+  verifyEmail,
+  confirmEmail,
 } = require("../controllers/authController");
 
 const router = express.Router();
+
+router.post("/verify-email", protect, verifyEmail);
+router.patch("/confirm-email/:id", confirmEmail);
 
 router.patch("/update-current-password", protect, updatePassword);
 router.post("/forgot-password", forgotPassword);

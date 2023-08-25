@@ -8,12 +8,16 @@ const {
   getTop3SmartDogs,
   getDogsStats,
 } = require("../controllers/dogsController");
-const { protect, restrictTo } = require("../controllers/authController");
+const {
+  protect,
+  restrictTo,
+  restricVerified,
+} = require("../controllers/authController");
 
 const router = express.Router();
 
-router.get("/dogs-stats", getDogsStats);
-router.get("/top-3-smart-dogs", getTop3SmartDogs);
+router.get("/dogs-stats", protect, restricVerified, getDogsStats);
+router.get("/top-3-smart-dogs", protect, restricVerified, getTop3SmartDogs);
 
 router
   .route("/")

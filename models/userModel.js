@@ -55,6 +55,12 @@ const userSchema = new mongoose.Schema({
     default: true,
   },
   reasonDeleteAccout: String,
+  emailVerify: {
+    type: Boolean,
+    default: false,
+  },
+  emailVerifyOTP: String,
+  emailVerifyOTPTimeout: Date,
 });
 
 //static method
@@ -77,6 +83,15 @@ userSchema.methods.checkPasswordChangeAfter = function (JWTTimestamp) {
   if (this.passwordChangedAt)
     return Math.floor(Date.parse(this.passwordChangedAt / 1000)) > JWTTimestamp;
   return false;
+};
+
+userSchema.methods.createVerifyEmailOTP = async function () {
+  const otp = Math.floor(1000 + Math.random() * 9000).toString();
+
+  this.emailVerifyOTP = await bcrypt.hash(otp, 12);
+  this.emailVerifyOTPTimeout = Date.now() + 3 * 60 * 1000;
+
+  return otp;
 };
 
 userSchema.pre("save", async function (next) {
